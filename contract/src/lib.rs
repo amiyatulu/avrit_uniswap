@@ -1,54 +1,91 @@
-use near_sdk::{env, near_bindgen};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{UnorderedMap, LookupMap};
-use near_sdk::{ext_contract,  AccountId, Balance, Gas, Promise};
+use near_sdk::collections::{LookupMap, UnorderedMap};
+use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::{env, near_bindgen};
+use near_sdk::{ext_contract, AccountId, Balance, Gas, Promise};
 
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+
+const NO_DEPOSIT: Balance = 0;
+const GAS_FOR_SWAP: Gas = 10_000_000_000_000;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Uniswap {
     records: UnorderedMap<String, String>,
     uni_totalsupply: u128,
-    uni_balances:LookupMap<AccountId, Balance>,
+    uni_balances: LookupMap<AccountId, Balance>,
     avrit_token_balance: u128,
+    avrit_token_id: AccountId,
+}
 
+// #[ext_contract(ext_fungible_token)]
+// trait FungibleToken {
+//     fn ft_transfer(&mut self, receiver_id: ValidAccountId, amount: U128, memo: Option<String>);
+// }
+
+#[ext_contract(ext_fungible_token)]
+trait FungibleToken {
+    fn transfer(&mut self, receiver_id: AccountId, amount: U128);
 }
 
 #[near_bindgen]
 impl Uniswap {
-
-    pub fn add_liquidity(&mut self, min_liquidity: u128, max_tokens: u128) {
+    #[payable]
+    pub fn add_liquidity(&mut self, min_liquidity: u128, max_tokens: u128) -> Promise {
         let deposit = env::attached_deposit();
         let contract_near_balance = env::account_balance();
         let user_address = env::predecessor_account_id();
+        let contract_address = env::current_account_id();
         assert!(max_tokens > 0, "Maximum tokens should be greater than zero");
         assert!(deposit > 0, "Deposit must be greater than zero");
         let total_liquidity = self.uni_totalsupply;
-        if(total_liquidity > 0) {
-            assert!(min_liquidity > 0, "Minimum liquidity must be greater than zero");
-            let near_reserve =  contract_near_balance - deposit;
+        if total_liquidity > 0 {
+            assert!(
+                min_liquidity > 0,
+                "Minimum liquidity must be greater than zero"
+            );
+            let near_reserve = contract_near_balance - deposit;
             let token_reserve = self.avrit_token_balance;
-            let token_amount = deposit * token_reserve/near_reserve + 1;
-            let liquidity_minted = deposit * total_liquidity/near_reserve;
-            assert!(max_tokens >= token_amount, "max_tokens must be greater than token amount");
-            assert!(liquidity_minted >= min_liquidity, "liquidity minted should be greater or equal to min_liquidity");
+            let token_amount = deposit * token_reserve / near_reserve + 1;
+            let liquidity_minted = deposit * total_liquidity / near_reserve;
+            assert!(
+                max_tokens >= token_amount,
+                "max_tokens must be greater than token amount"
+            );
+            assert!(
+                liquidity_minted >= min_liquidity,
+                "liquidity minted should be greater or equal to min_liquidity"
+            );
             let balance_option = self.uni_balances.get(&user_address);
             match balance_option {
                 Some(balance) => {
-                    self.uni_balances.insert(&user_address, &(balance+ liquidity_minted));
+                    self.uni_balances
+                        .insert(&user_address, &(balance + liquidity_minted));
                 }
                 None => {
                     self.uni_balances.insert(&user_address, &liquidity_minted);
                 }
             }
             self.uni_totalsupply = total_liquidity + liquidity_minted;
-
+            ext_fungible_token::transfer(
+                contract_address,
+                U128(token_amount),
+                &self.avrit_token_id,
+                NO_DEPOSIT,
+                env::prepaid_gas() - GAS_FOR_SWAP,
+            )
+        } else {
+            ext_fungible_token::transfer(
+                contract_address,
+                U128(0),
+                &self.avrit_token_id,
+                NO_DEPOSIT,
+                env::prepaid_gas() - GAS_FOR_SWAP,
+            )
         }
     }
-
-
 
     pub fn set_status(&mut self, message: String) {
         env::log(b"A");
@@ -61,16 +98,18 @@ impl Uniswap {
         return self.records.get(&account_id);
     }
 
-    #[init]    
-    pub fn new() -> Self {
+    #[init]
+    pub fn new(avrit_token_id: AccountId) -> Self {
         assert!(!env::state_exists(), "ERR_CONTRACT_IS_INITIALIZED");
-        let id = "68dbf390-0b13-4db1-bb7d-9bf6ac5d23ab".to_string().into_bytes();
-        Self{
-            records:UnorderedMap::new(id),
+        let id = "68dbf390-0b13-4db1-bb7d-9bf6ac5d23ab"
+            .to_string()
+            .into_bytes();
+        Self {
+            records: UnorderedMap::new(id),
             uni_totalsupply: 0,
             uni_balances: LookupMap::new(b"9a0e582c".to_vec()),
             avrit_token_balance: 0,
-
+            avrit_token_id: avrit_token_id,
         }
     }
 }
@@ -113,19 +152,19 @@ mod tests {
     fn set_get_message() {
         let context = get_context(vec![], false);
         testing_env!(context);
-        let mut contract = Uniswap::new();
-        contract.set_status("hello".to_string());
-        assert_eq!(
-            "hello".to_string(),
-            contract.get_status("bob_near".to_string()).unwrap()
-        );
+        // let mut contract = Uniswap::new();
+        // contract.set_status("hello".to_string());
+        // assert_eq!(
+        //     "hello".to_string(),
+        //     contract.get_status("bob_near".to_string()).unwrap()
+        // );
     }
 
     #[test]
     fn get_nonexistent_message() {
         let context = get_context(vec![], true);
         testing_env!(context);
-        let contract = Uniswap::new();
-        assert_eq!(None, contract.get_status("francis.near".to_string()));
+        // let contract = Uniswap::new();
+        // assert_eq!(None, contract.get_status("francis.near".to_string()));
     }
 }
