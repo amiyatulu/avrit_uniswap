@@ -1,6 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedMap};
 use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::serde_json::json;
 use near_sdk::{env, near_bindgen};
 use near_sdk::{ext_contract, AccountId, Balance, Gas, Promise};
 
@@ -8,6 +9,7 @@ use near_sdk::{ext_contract, AccountId, Balance, Gas, Promise};
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 const NO_DEPOSIT: Balance = 0;
+const DEPOSIT: Balance = 38600000000000000000000;
 const GAS_FOR_SWAP: Gas = 10_000_000_000_000;
 
 #[near_bindgen]
@@ -20,20 +22,10 @@ pub struct Uniswap {
     avrit_token_id: AccountId,
 }
 
-// #[ext_contract(ext_fungible_token)]
-// trait FungibleToken {
-//     fn ft_transfer(&mut self, receiver_id: ValidAccountId, amount: U128, memo: Option<String>);
-// }
-
-#[ext_contract(ext_fungible_token)]
-trait FungibleToken {
-    fn transfer(&mut self, receiver_id: AccountId, amount: U128);
-}
-
 #[near_bindgen]
 impl Uniswap {
     #[payable]
-    pub fn add_liquidity(&mut self, min_liquidity: u128, max_tokens: u128) -> Promise {
+    pub fn add_liquidity(&mut self, min_liquidity: u128, max_tokens: u128) -> U128 {
         let deposit = env::attached_deposit();
         let contract_near_balance = env::account_balance();
         let user_address = env::predecessor_account_id();
@@ -69,21 +61,37 @@ impl Uniswap {
                 }
             }
             self.uni_totalsupply = total_liquidity + liquidity_minted;
-            ext_fungible_token::transfer(
-                contract_address,
-                U128(token_amount),
-                &self.avrit_token_id,
-                NO_DEPOSIT,
+
+            Promise::new(self.avrit_token_id.clone()).function_call(
+                b"transfer_from".to_vec(),
+                json!({"owner_id":contract_address, "new_owner_id":"avrit.testnet", "amount": U128(token_amount)}).to_string().as_bytes().to_vec(),
+                DEPOSIT,
                 env::prepaid_gas() - GAS_FOR_SWAP,
-            )
+            );
+
+            liquidity_minted.into()
         } else {
-            ext_fungible_token::transfer(
-                contract_address,
-                U128(0),
-                &self.avrit_token_id,
-                NO_DEPOSIT,
+            let token_amount = max_tokens;
+            let initial_liquidity = contract_near_balance;
+
+            self.uni_totalsupply = initial_liquidity;
+            let balance_option = self.uni_balances.get(&user_address);
+            match balance_option {
+                Some(_) => {
+                    self.uni_balances.insert(&user_address, &initial_liquidity);
+                }
+                None => {
+                    self.uni_balances.insert(&user_address, &initial_liquidity);
+                }
+            }
+            Promise::new(self.avrit_token_id.clone()).function_call(
+                b"transfer_from".to_vec(),
+                json!({"owner_id":contract_address, "new_owner_id":"avrit.testnet", "amount": U128(token_amount)}).to_string().as_bytes().to_vec(),
+                DEPOSIT,
                 env::prepaid_gas() - GAS_FOR_SWAP,
-            )
+            );
+
+            initial_liquidity.into()
         }
     }
 
